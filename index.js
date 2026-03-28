@@ -61,8 +61,6 @@ app.post('/send-otp', async (req, res) => {
     console.error(e);
     return res.status(500).json({ error: 'Failed to send OTP', details: e.message });
   }
-    return res.status(500).json({ error: 'Failed to send OTP' });
-  }
 });
 
 app.post('/verify-otp', async (req, res) => {
