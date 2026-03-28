@@ -13,7 +13,12 @@ app.use(bodyParser.json());
 const PORT = process.env.PORT || 3000;
 
 // Initialize Firebase Admin
-if (process.env.SERVICE_ACCOUNT_PATH) {
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+} else if (process.env.SERVICE_ACCOUNT_PATH) {
   const serviceAccount = require(process.env.SERVICE_ACCOUNT_PATH);
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
@@ -21,7 +26,7 @@ if (process.env.SERVICE_ACCOUNT_PATH) {
 } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
   admin.initializeApp();
 } else {
-  console.error('No Firebase service account configured. Set SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS.');
+  console.error('No Firebase service account configured. Set FIREBASE_SERVICE_ACCOUNT, SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS.');
   process.exit(1);
 }
 
