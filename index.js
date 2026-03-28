@@ -130,4 +130,35 @@ app.post('/verify-otp', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+// Health check endpoint to verify server is running
+app.get('/', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+
+const server = app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+
+// Graceful shutdown and diagnostic logging for SIGTERM/SIGINT
+process.on('SIGTERM', () => {
+  console.warn('Received SIGTERM, shutting down...');
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
+  // force exit if not closed in time
+  setTimeout(() => {
+    console.error('Forcing shutdown after SIGTERM timeout');
+    process.exit(1);
+  }, 10000).unref();
+});
+
+process.on('SIGINT', () => {
+  console.warn('Received SIGINT, shutting down...');
+  process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, p) => {
+  console.error('Unhandled Rejection at:', p, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
