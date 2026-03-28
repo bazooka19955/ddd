@@ -16,18 +16,39 @@ app.use(bodyParser.json());
 // Do NOT use localhost in production!
 const PORT = process.env.PORT || 3000;
 
-// Initialize Firebase Admin
+// print server time to help diagnose clock skew issues
+console.log('Server time:', new Date().toISOString());
+
+// Initialize Firebase Admin with basic validation and helpful error messages
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    // basic validation of private_key format
+    if (!serviceAccount.private_key || !serviceAccount.private_key.includes('PRIVATE KEY')) {
+      console.warn('Firebase service account seems invalid: missing or malformed private_key.');
+    }
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+  } catch (err) {
+    console.error('Failed parsing FIREBASE_SERVICE_ACCOUNT:', err.message);
+    process.exit(1);
+  }
 } else if (process.env.SERVICE_ACCOUNT_PATH) {
-  const serviceAccount = require(process.env.SERVICE_ACCOUNT_PATH);
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+  try {
+    const serviceAccount = require(process.env.SERVICE_ACCOUNT_PATH);
+    if (!serviceAccount.private_key || !serviceAccount.private_key.includes('PRIVATE KEY')) {
+      console.warn('Firebase service account file seems invalid: missing or malformed private_key.');
+    }
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+  } catch (err) {
+    console.error('Failed loading service account from path:', err.message);
+    process.exit(1);
+  }
 } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  // Rely on GOOGLE_APPLICATION_CREDENTIALS environment and ADC
   admin.initializeApp();
 } else {
   console.error('No Firebase service account configured. Set FIREBASE_SERVICE_ACCOUNT, SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS.');
@@ -58,8 +79,12 @@ app.post('/send-otp', async (req, res) => {
     otps.set(phone, { otp, expiresAt });
     return res.json({ success: true });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: 'Failed to send OTP', details: e.message });
+    console.error('Twilio error:', e);
+    return res.status(500).json({
+      error: 'Failed to send OTP',
+      details: e.message,
+      twilio: e
+    });
   }
 });
 
