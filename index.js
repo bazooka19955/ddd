@@ -10,6 +10,10 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+// IMPORTANT: When deploying online (Railway, Render, etc),
+// set SERVER_BASE_URL in your .env or Railway Variables to your public server URL, e.g.:
+// SERVER_BASE_URL=https://ddd-production-9afe.up.railway.app
+// Do NOT use localhost in production!
 const PORT = process.env.PORT || 3000;
 
 // Initialize Firebase Admin
@@ -44,20 +48,19 @@ app.post('/send-otp', async (req, res) => {
   if (!phone) return res.status(400).json({ error: 'phone required' });
   const otp = generateOTP();
   const expiresAt = Date.now() + (parseInt(process.env.OTP_EXPIRY_SECONDS || '300') * 1000);
-
   try {
-    // send via Twilio WhatsApp
+    // send via Twilio WhatsApp (body only, no contentSid/contentVariables)
     await twilioClient.messages.create({
       from: process.env.TWILIO_WHATSAPP_FROM,
       to: `whatsapp:${phone}`,
-      body: `رمز التحقق الخاص بك هو: ${otp}`,
+      body: `رمز التحقق الخاص بك هو: ${otp}`
     });
-
     otps.set(phone, { otp, expiresAt });
-
     return res.json({ success: true });
   } catch (e) {
     console.error(e);
+    return res.status(500).json({ error: 'Failed to send OTP', details: e.message });
+  }
     return res.status(500).json({ error: 'Failed to send OTP' });
   }
 });
