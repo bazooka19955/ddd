@@ -1,0 +1,102 @@
+require('dotenv').config();
+const express = require('express');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const twilio = require('twilio');
+const admin = require('firebase-admin');
+const fs = require('fs');
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+
+const PORT = process.env.PORT || 3000;
+
+// Initialize Firebase Admin
+if (process.env.SERVICE_ACCOUNT_PATH) {
+  const serviceAccount = require(process.env.SERVICE_ACCOUNT_PATH);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+} else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  admin.initializeApp();
+} else {
+  console.error('No Firebase service account configured. Set SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS.');
+  process.exit(1);
+}
+
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+// Simple in-memory store for OTPs (for demo). Replace with DB in production.
+const otps = new Map();
+
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+app.post('/send-otp', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: 'phone required' });
+  const otp = generateOTP();
+  const expiresAt = Date.now() + (parseInt(process.env.OTP_EXPIRY_SECONDS || '300') * 1000);
+
+  try {
+    // send via Twilio WhatsApp
+    await twilioClient.messages.create({
+      from: process.env.TWILIO_WHATSAPP_FROM,
+      to: `whatsapp:${phone}`,
+      body: `رمز التحقق الخاص بك هو: ${otp}`,
+    });
+
+    otps.set(phone, { otp, expiresAt });
+
+    return res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'Failed to send OTP' });
+  }
+});
+
+app.post('/verify-otp', async (req, res) => {
+  const { phone, otp } = req.body;
+  if (!phone || !otp) return res.status(400).json({ error: 'phone and otp required' });
+  const entry = otps.get(phone);
+  if (!entry) return res.status(400).json({ error: 'No OTP sent for this phone' });
+  if (Date.now() > entry.expiresAt) {
+    otps.delete(phone);
+    return res.status(400).json({ error: 'OTP expired' });
+  }
+  if (entry.otp !== otp) return res.status(400).json({ error: 'Invalid OTP' });
+
+  // OTP is valid — create (or reuse) a Firebase custom token
+  try {
+    // Use phone as uid. In production, map to your internal users.
+    const uid = `wa:${phone}`;
+    const additionalClaims = { provider: 'whatsapp' };
+
+    // Create custom token
+    const customToken = await admin.auth().createCustomToken(uid, additionalClaims);
+
+    // Optionally: create user record if not exists
+    try {
+      await admin.auth().getUser(uid);
+    } catch (e) {
+      try {
+        await admin.auth().createUser({ uid, phoneNumber: phone });
+        console.log(`Firebase user created: ${uid} (${phone})`);
+      } catch (createErr) {
+        console.error('Failed to create Firebase user:', createErr);
+      }
+    }
+
+    // remove used otp
+    otps.delete(phone);
+
+    return res.json({ success: true, token: customToken });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'Failed to create custom token' });
+  }
+});
+
+app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
