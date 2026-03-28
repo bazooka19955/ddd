@@ -70,14 +70,37 @@ app.post('/send-otp', async (req, res) => {
   const otp = generateOTP();
   const expiresAt = Date.now() + (parseInt(process.env.OTP_EXPIRY_SECONDS || '300') * 1000);
   try {
-    // send via Twilio WhatsApp (body only, no contentSid/contentVariables)
-    await twilioClient.messages.create({
-      from: process.env.TWILIO_WHATSAPP_FROM,
-      to: `whatsapp:${phone}`,
-      body: `رمز التحقق الخاص بك هو: ${otp}`
-    });
-    otps.set(phone, { otp, expiresAt });
-    return res.json({ success: true });
+    // try WhatsApp first
+    const waFrom = process.env.TWILIO_WHATSAPP_FROM;
+    let sentChannel = null;
+    try {
+      const waMsg = await twilioClient.messages.create({
+        from: waFrom,
+        to: `whatsapp:${phone}`,
+        body: `رمز التحقق الخاص بك هو: ${otp}`
+      });
+      console.log('Twilio WA sent, sid:', waMsg.sid);
+      sentChannel = 'whatsapp';
+    } catch (waErr) {
+      console.warn('WhatsApp send failed, attempting SMS fallback:', waErr && waErr.message);
+      // SMS fallback
+      const smsFrom = process.env.TWILIO_SMS_FROM || process.env.TWILIO_WHATSAPP_FROM;
+      try {
+        const smsMsg = await twilioClient.messages.create({
+          from: smsFrom,
+          to: phone,
+          body: `رمز التحقق الخاص بك هو: ${otp}`
+        });
+        console.log('Twilio SMS sent, sid:', smsMsg.sid);
+        sentChannel = 'sms';
+      } catch (smsErr) {
+        console.error('SMS fallback also failed:', smsErr);
+        throw smsErr; // will be caught by outer catch
+      }
+    }
+
+    otps.set(phone, { otp, expiresAt, channel: sentChannel });
+    return res.json({ success: true, channel: sentChannel });
   } catch (e) {
     console.error('Twilio error:', e);
     return res.status(500).json({
@@ -118,6 +141,15 @@ app.post('/verify-otp', async (req, res) => {
       } catch (createErr) {
         console.error('Failed to create Firebase user:', createErr);
       }
+    }
+
+    // Persist a user record in Firestore (or update) for app data
+    try {
+      const db = admin.firestore();
+      await db.collection('users').doc(uid).set({ phone, provider: 'whatsapp', updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      console.log('Stored/updated user record in Firestore:', uid);
+    } catch (fsErr) {
+      console.error('Failed to write user to Firestore:', fsErr);
     }
 
     // remove used otp
